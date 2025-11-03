@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "LiveGalGameWAS (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "LiveGalGameWAS (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

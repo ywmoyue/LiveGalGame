@@ -14,6 +14,105 @@
     </Window.SystemBackdrop>
 
     <Grid>
-
+        <!-- 背景图片 -->
+        <Image x:Name="BackgroundImage" Stretch="UniformToFill" Source="ms-appx:///Assets/StoreLogo.png"/>
+        
+        <!-- 字幕区域 -->
+        <Border x:Name="SubtitleBorder" 
+                Background="#AA000000" 
+                HorizontalAlignment="Center" 
+                VerticalAlignment="Top" 
+                Margin="0,50,0,0" 
+                Padding="20,10" 
+                CornerRadius="10"
+                Visibility="Collapsed">
+            <TextBlock x:Name="SubtitleText" 
+                      Text="字幕显示区域" 
+                      Foreground="White" 
+                      FontSize="16" 
+                      TextWrapping="Wrap" 
+                      TextAlignment="Center" 
+                      MaxWidth="600"/>
+        </Border>
+        
+        <!-- 对话框 -->
+        <Border x:Name="DialogBorder" 
+                Background="#CC000000" 
+                HorizontalAlignment="Center" 
+                VerticalAlignment="Bottom" 
+                Margin="0,0,0,100" 
+                Padding="20,15" 
+                CornerRadius="15"
+                Width="600"
+                Height="150">
+            <StackPanel>
+                <!-- 说话者名称 -->
+                <TextBlock x:Name="SpeakerText" 
+                          Text="说话者" 
+                          Foreground="#FFD700" 
+                          FontSize="18" 
+                          FontWeight="Bold" 
+                          Margin="0,0,0,10"/>
+                
+                <!-- 对话内容 -->
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Height="80">
+                    <TextBlock x:Name="DialogText" 
+                              Text="这里是对话内容..." 
+                              Foreground="White" 
+                              FontSize="16" 
+                              TextWrapping="Wrap"/>
+                </ScrollViewer>
+            </StackPanel>
+        </Border>
+        
+        <!-- 选项按钮区域 -->
+        <StackPanel x:Name="OptionsPanel" 
+                   HorizontalAlignment="Center" 
+                   VerticalAlignment="Bottom" 
+                   Margin="0,0,0,20" 
+                   Spacing="10"
+                   Visibility="Collapsed">
+            <Button x:Name="Option1Button" 
+                   Content="选项1" 
+                   Background="#4CAF50" 
+                   Foreground="White" 
+                   Padding="20,10" 
+                   FontSize="14"
+                   Click="OptionButton_Click"/>
+            <Button x:Name="Option2Button" 
+                   Content="选项2" 
+                   Background="#2196F3" 
+                   Foreground="White" 
+                   Padding="20,10" 
+                   FontSize="14"
+                   Click="OptionButton_Click"/>
+            <Button x:Name="Option3Button" 
+                   Content="选项3" 
+                   Background="#FF9800" 
+                   Foreground="White" 
+                   Padding="20,10" 
+                   FontSize="14"
+                   Click="OptionButton_Click"/>
+        </StackPanel>
+        
+        <!-- 语音识别状态 -->
+        <Border x:Name="SpeechStatusBorder" 
+                Background="#AA000000" 
+                HorizontalAlignment="Right" 
+                VerticalAlignment="Top" 
+                Margin="0,20,20,0" 
+                Padding="15,8" 
+                CornerRadius="20">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+                <Ellipse x:Name="SpeechIndicator" 
+                        Width="12" 
+                        Height="12" 
+                        Fill="Red"/>
+                <TextBlock x:Name="SpeechStatusText" 
+                          Text="语音识别未启动" 
+                          Foreground="White" 
+                          FontSize="12"/>
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>

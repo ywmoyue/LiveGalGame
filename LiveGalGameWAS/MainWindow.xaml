@@ -6,6 +6,7 @@
     xmlns:local="using:LiveGalGameWAS"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls"
     mc:Ignorable="d"
     Title="LiveGalGameWAS">
 
@@ -15,8 +16,16 @@
 
     <Grid>
         <!-- 背景图片 -->
-        <Image x:Name="BackgroundImage" Stretch="UniformToFill" Source="ms-appx:///Assets/StoreLogo.png"/>
+        <!--<Image x:Name="BackgroundImage" Stretch="UniformToFill" Source="ms-appx:///Assets/StoreLogo.png"/>-->
         
+        <!-- 视频背景 -->
+        <Image x:Name="VideoBackground" Stretch="UniformToFill" Visibility="Collapsed"/>
+
+        <controls:CameraPreview x:Name="CameraPreviewControl"
+                                Visibility="Collapsed"
+                                IsFrameSourceGroupButtonVisible="True" />
+
+
         <!-- 字幕区域 -->
         <Border x:Name="SubtitleBorder" 
                 Background="#AA000000" 
@@ -94,6 +103,63 @@
                    FontSize="14"
                    Click="OptionButton_Click"/>
         </StackPanel>
+        
+        <!-- 背景控制按钮 -->
+        <Button x:Name="BackgroundSettingsButton" 
+                Content="⚙️" 
+                Background="Transparent" 
+                Foreground="White" 
+                FontSize="16" 
+                Width="40" 
+                Height="40" 
+                HorizontalAlignment="Left" 
+                VerticalAlignment="Top" 
+                Margin="20,20,0,0" 
+                Click="BackgroundSettingsButton_Click"/>
+        
+        <!-- 背景设置面板 -->
+        <Border x:Name="BackgroundSettingsPanel" 
+                Background="#CC000000" 
+                HorizontalAlignment="Left" 
+                VerticalAlignment="Top" 
+                Margin="20,70,0,0" 
+                Padding="15" 
+                CornerRadius="10"
+                Visibility="Collapsed"
+                Width="300">
+            <StackPanel Spacing="10">
+                <TextBlock Text="背景设置" Foreground="White" FontSize="16" FontWeight="Bold"/>
+                
+                <ComboBox x:Name="BackgroundTypeComboBox" 
+                         Header="背景类型:" 
+                         SelectionChanged="BackgroundTypeComboBox_SelectionChanged">
+                    <ComboBoxItem Content="静态图片" IsSelected="True"/>
+                    <ComboBoxItem Content="相机视频流"/>
+                    <ComboBoxItem Content="应用程序画面"/>
+                </ComboBox>
+                
+                <ComboBox x:Name="CameraDeviceComboBox" 
+                         Header="选择相机:" 
+                         Visibility="Collapsed"/>
+                
+                <ComboBox x:Name="ApplicationComboBox" 
+                         Header="选择应用程序:" 
+                         Visibility="Collapsed"/>
+                
+                <Button x:Name="StartCaptureButton" 
+                       Content="开始捕获" 
+                       Click="StartCaptureButton_Click" 
+                       Background="#4CAF50" 
+                       Foreground="White"/>
+                
+                <Button x:Name="StopCaptureButton" 
+                       Content="停止捕获" 
+                       Click="StopCaptureButton_Click" 
+                       Background="#F44336" 
+                       Foreground="White"
+                       Visibility="Collapsed"/>
+            </StackPanel>
+        </Border>
         
         <!-- 语音识别状态 -->
         <Border x:Name="SpeechStatusBorder" 

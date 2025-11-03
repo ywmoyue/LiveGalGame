@@ -1,12 +1,17 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
-using Windows.Media.SpeechRecognition;
 using Vosk;
+using Windows.Media;
+using Windows.Media.SpeechRecognition;
+using Windows.UI.Core;
 
 // To learn more about WinUI, the WinUI project structure,
 // and more about our project templates, see: http://aka.ms/winui-project-info;
@@ -19,18 +24,64 @@ namespace LiveGalGameWAS
     public sealed partial class MainWindow : Window
     {
         private SpeechRecognizer? speechRecognizer;
-        private VoskRecognizer? voskRecognizer;
+        private ScreenCaptureService? screenCaptureService;
+        private MemoryStream audioBuffer;
         private bool isListening = false;
         private List<string> currentOptions = new List<string>();
-        
+        private BackgroundType currentBackgroundType = BackgroundType.StaticImage;
+        private VoskAudioService _voskAudioService;
+
         public MainWindow()
         {
             InitializeComponent();
             this.Closed += MainWindow_Closed;
+
             InitializeSpeechRecognition();
+            InitializeVoskAudioService();
+            InitializeBackgroundServices();
             StartGame();
         }
-        
+
+        private void InitializeVoskAudioService()
+        {
+            try
+            {
+                var modelPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "VoskModels", "vosk-model-cn-0.22");
+                _voskAudioService = new VoskAudioService(modelPath);
+                _voskAudioService.RecognitionResult += OnVoskRecognitionResult;
+
+                UpdateSpeechStatus("VOSK音频服务已初始化");
+            }
+            catch (Exception ex)
+            {
+                UpdateSpeechStatus($"VOSK音频服务初始化失败: {ex.Message}");
+            }
+        }
+
+        private void OnVoskRecognitionResult(string result)
+        {
+            // 解析JSON结果
+            try
+            {
+                var json = JObject.Parse(result);
+                var text = json["text"]?.ToString();
+
+                if (!string.IsNullOrEmpty(text))
+                {
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        ShowDialog("你(VOSK)", text);
+                        ProcessSpeechInput(text);
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"解析VOSK结果失败: {ex.Message}");
+            }
+        }
+
+
         private async void InitializeSpeechRecognition()
         {
             try
@@ -59,25 +110,6 @@ namespace LiveGalGameWAS
                 UpdateSpeechStatus($"语音识别初始化失败: {ex.Message}");
             }
             
-            // 初始化VOSK识别器
-            InitializeVoskRecognition();
-        }
-        
-        private void InitializeVoskRecognition()
-        {
-            try
-            {
-                // 初始化Vosk识别器
-                var modelPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "VoskModels", "vosk-model-cn-0.22");
-                var model = new Vosk.Model(modelPath);
-                voskRecognizer = new VoskRecognizer(model, 16000.0f);
-                
-                UpdateSpeechStatus("VOSK识别器已初始化");
-            }
-            catch (System.Exception ex)
-            {
-                UpdateSpeechStatus($"VOSK初始化失败: {ex.Message}");
-            }
         }
         
         private void StartGame()
@@ -127,15 +159,21 @@ namespace LiveGalGameWAS
         private async void OptionButton_Click(object sender, RoutedEventArgs e)
         {
             var button = sender as Button;
-            if (button != null)
+            if (button != null && button.Content != null)
             {
                 var optionText = button.Content.ToString();
-                await ProcessOption(optionText);
+                if (!string.IsNullOrEmpty(optionText))
+                {
+                    await ProcessOption(optionText);
+                }
             }
         }
         
-        private async Task ProcessOption(string option)
+        private async Task ProcessOption(string? option)
         {
+            if (string.IsNullOrEmpty(option))
+                return;
+                
             HideOptions();
             
             switch (option)
@@ -166,7 +204,8 @@ namespace LiveGalGameWAS
         {
             if (!isListening)
             {
-                await speechRecognizer.ContinuousRecognitionSession.StartAsync();
+                //await speechRecognizer.ContinuousRecognitionSession.StartAsync();
+                _voskAudioService.StartListening();
                 isListening = true;
                 UpdateSpeechStatus("正在监听...");
                 SpeechIndicator.Fill = new SolidColorBrush(Microsoft.UI.Colors.Green);
@@ -183,7 +222,7 @@ namespace LiveGalGameWAS
                 SpeechIndicator.Fill = new SolidColorBrush(Microsoft.UI.Colors.Red);
             }
         }
-        
+
         private void SpeechDetected(object sender, object e)
         {
             UpdateSpeechStatus("检测到语音输入...");
@@ -249,10 +288,186 @@ namespace LiveGalGameWAS
             });
         }
         
+        private async void InitializeBackgroundServices()
+        {
+            try
+            {
+                screenCaptureService = new ScreenCaptureService();
+               // screenCaptureService.FrameCaptured += OnFrameCaptured;
+                
+                await LoadAvailableCamerasAsync();
+                await LoadAvailableApplicationsAsync();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"背景服务初始化失败: {ex.Message}");
+            }
+        }
+        
+        private async Task LoadAvailableCamerasAsync()
+        {
+            try
+            {
+                // 这里可以添加获取可用相机的逻辑
+                CameraDeviceComboBox.Items.Clear();
+                CameraDeviceComboBox.Items.Add("默认相机");
+                CameraDeviceComboBox.SelectedIndex = 0;
+                
+                await Task.CompletedTask; // 避免异步警告
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"加载相机列表失败: {ex.Message}");
+            }
+        }
+        
+        private async Task LoadAvailableApplicationsAsync()
+        {
+            try
+            {
+                if (screenCaptureService != null)
+                {
+                    var windows = await screenCaptureService.GetAvailableWindowsAsync();
+                    ApplicationComboBox.Items.Clear();
+                    
+                    foreach (var window in windows)
+                    {
+                        ApplicationComboBox.Items.Add(window);
+                    }
+                    
+                    if (ApplicationComboBox.Items.Count > 0)
+                    {
+                        ApplicationComboBox.SelectedIndex = 0;
+                    }
+                }
+                else
+                {
+                    // 如果screenCaptureService为null，添加一些示例应用程序
+                    ApplicationComboBox.Items.Clear();
+                    ApplicationComboBox.Items.Add("示例应用程序");
+                    ApplicationComboBox.SelectedIndex = 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"加载应用程序列表失败: {ex.Message}");
+            }
+        }
+        
+        private void OnFrameCaptured(SoftwareBitmapSource frame)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (VideoBackground != null)
+                {
+                    VideoBackground.Source = frame;
+                    VideoBackground.Visibility = Visibility.Visible;
+                }
+            });
+        }
+        
+        private void BackgroundSettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            BackgroundSettingsPanel.Visibility = BackgroundSettingsPanel.Visibility == Visibility.Visible 
+                ? Visibility.Collapsed 
+                : Visibility.Visible;
+        }
+        
+        private void BackgroundTypeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (CameraDeviceComboBox == null) return;
+            if (BackgroundTypeComboBox.SelectedItem is ComboBoxItem item)
+            {
+                var selectedType = item.Content.ToString();
+                
+                CameraDeviceComboBox.Visibility = selectedType == "相机视频流" ? Visibility.Visible : Visibility.Collapsed;
+                ApplicationComboBox.Visibility = selectedType == "应用程序画面" ? Visibility.Visible : Visibility.Collapsed;
+                
+                currentBackgroundType = selectedType switch
+                {
+                    "静态图片" => BackgroundType.StaticImage,
+                    "相机视频流" => BackgroundType.Camera,
+                    "应用程序画面" => BackgroundType.Application,
+                    _ => BackgroundType.StaticImage
+                };
+            }
+        }
+        
+        private async void StartCaptureButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                switch (currentBackgroundType)
+                {
+                    case BackgroundType.Camera:
+                        CameraPreviewControl.Visibility = Visibility.Visible;
+                        await CameraPreviewControl.StartAsync();
+                        break;
+                    case BackgroundType.Application:
+                        if (screenCaptureService != null && !screenCaptureService.IsCapturing)
+                        {
+                            var selectedApp = ApplicationComboBox.SelectedItem?.ToString();
+                            await screenCaptureService.StartCaptureAsync(selectedApp ?? string.Empty);
+                            StartCaptureButton.Visibility = Visibility.Collapsed;
+                            StopCaptureButton.Visibility = Visibility.Visible;
+                        }
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"开始捕获失败: {ex.Message}");
+            }
+        }
+        
+        private async void StopCaptureButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                switch (currentBackgroundType)
+                {
+                    case BackgroundType.Camera:
+                        CameraPreviewControl.Visibility = Visibility.Visible;
+                        break;
+                    case BackgroundType.Application:
+                        if (screenCaptureService != null && screenCaptureService.IsCapturing)
+                        {
+                            await screenCaptureService.StopCaptureAsync();
+
+                            CameraPreviewControl.Visibility = Visibility.Collapsed;
+                            StartCaptureButton.Visibility = Visibility.Visible;
+                            StopCaptureButton.Visibility = Visibility.Collapsed;
+                            
+                            // 恢复静态背景
+                            VideoBackground.Visibility = Visibility.Collapsed;
+                        }
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"停止捕获失败: {ex.Message}");
+            }
+        }
+        
         private void MainWindow_Closed(object sender, WindowEventArgs args)
         {
             speechRecognizer?.Dispose();
-            voskRecognizer?.Dispose();
+            _voskAudioService?.Dispose();
+            screenCaptureService?.Dispose();
         }
+
+    }
+
+    class VoskResult
+    {
+        public string Text { get; set; }
+    }
+
+    public enum BackgroundType
+    {
+        StaticImage,
+        Camera,
+        Application
     }
 }

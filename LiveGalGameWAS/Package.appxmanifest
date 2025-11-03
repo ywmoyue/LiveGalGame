@@ -10,7 +10,7 @@
   <Identity
     Name="c74f7656-57f0-4426-a62b-26c3cf38e1ba"
     Publisher="CN=muyan"
-    Version="1.0.0.0" />
+    Version="0.0.1.0" />
 
   <mp:PhoneIdentity PhoneProductId="c74f7656-57f0-4426-a62b-26c3cf38e1ba" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 

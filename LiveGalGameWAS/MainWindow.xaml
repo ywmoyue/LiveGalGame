@@ -15,8 +15,7 @@
     </Window.SystemBackdrop>
 
     <Grid>
-        <Frame>
-            <local:MainPage x:Name="MainPage"></local:MainPage>
+        <Frame x:Name="MainFrame">
         </Frame>
     </Grid>
 </Window>

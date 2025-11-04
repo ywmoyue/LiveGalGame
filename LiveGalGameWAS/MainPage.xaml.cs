@@ -1,8 +1,8 @@
+using CommunityToolkit.WinUI.Helpers;
+using LiveGalGameWAS.Models;
+using LiveGalGameWAS.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Controls.Primitives;
-using Microsoft.UI.Xaml.Data;
-using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
@@ -11,12 +11,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading.Tasks;
-using Windows.Foundation;
-using Windows.Foundation.Collections;
+using Windows.Devices.Enumeration;
+using Windows.Media.Capture;
+using Windows.Media.MediaProperties;
 using Windows.Media.SpeechRecognition;
 using Windows.Storage.Pickers;
+using Windows.UI.Core;
 
 // To learn more about WinUI, the WinUI project structure,
 // and more about our project templates, see: http://aka.ms/winui-project-info.
@@ -28,137 +29,189 @@ namespace LiveGalGameWAS
     /// </summary>
     public sealed partial class MainPage : Page
     {
-        private SpeechRecognizer? speechRecognizer;
-        private ScreenCaptureService? screenCaptureService;
-        private MemoryStream audioBuffer;
-        private bool isListening = false;
+        private IAsrService? _currentAsrService;
+        private AppSettings _appSettings = new AppSettings();
         private List<string> currentOptions = new List<string>();
-        private BackgroundType currentBackgroundType = BackgroundType.StaticImage;
         private VoskAudioService _voskAudioService;
+        private WindowsSpeechService _windowsSpeechService;
+        private bool _isCameraInitialized = false;
 
         public MainPage()
         {
-            Loaded += MainPage_Loaded;
             InitializeComponent();
         }
 
-        private void MainPage_Loaded(object sender, RoutedEventArgs e)
+        protected override async void OnNavigatedTo(NavigationEventArgs e)
         {
-            InitializeSpeechRecognition();
-            InitializeVoskAudioService();
-            InitializeBackgroundServices();
+            base.OnNavigatedTo(e);
+
+            await InitializeSpeechRecognitionServices();
             StartGame();
-        }
 
-
-        //private void InitializeVoskAudioService()
-        //{
-        //    try
-        //    {
-        //        var modelPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "VoskModels", "vosk-model-cn-0.22");
-        //        _voskAudioService = new VoskAudioService(modelPath);
-        //        _voskAudioService.RecognitionResult += OnVoskRecognitionResult;
-
-        //        UpdateSpeechStatus("VOSKÒôÆµ·şÎñÒÑ³õÊ¼»¯");
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        UpdateSpeechStatus($"VOSKÒôÆµ·şÎñ³õÊ¼»¯Ê§°Ü: {ex.Message}");
-        //    }
-        //}
-
-
-        private async Task InitializeVoskAudioService()
-        {
-            try
+            // å¦‚æœä»è®¾ç½®é¡µé¢è¿”å›ï¼Œåº”ç”¨æ–°çš„è®¾ç½®
+            if (e.Parameter is AppSettings settings)
             {
-                // Show folder picker dialog to select model path
-                var folderPicker = new FolderPicker();
-                folderPicker.FileTypeFilter.Add("*");
-
-                // Initialize with the WinRT window
-                var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(MainWindow.Current);
-                WinRT.Interop.InitializeWithWindow.Initialize(folderPicker, hwnd);
-
-                var modelFolder = await folderPicker.PickSingleFolderAsync();
-
-                if (modelFolder != null)
-                {
-                    _voskAudioService = new VoskAudioService(modelFolder.Path);
-                    _voskAudioService.RecognitionResult += OnVoskRecognitionResult;
-
-                    UpdateSpeechStatus($"VOSKÒôÆµ·şÎñÒÑ³õÊ¼»¯£¬Ä£ĞÍÂ·¾¶: {modelFolder.Path}");
-                }
-                else
-                {
-                    UpdateSpeechStatus("Î´Ñ¡ÔñVOSKÄ£ĞÍÂ·¾¶£¬ÓïÒôÊ¶±ğ½«²»¿ÉÓÃ");
-                }
-            }
-            catch (Exception ex)
-            {
-                UpdateSpeechStatus($"VOSKÒôÆµ·şÎñ³õÊ¼»¯Ê§°Ü: {ex.Message}");
+                _appSettings = settings;
+                SwitchSpeechRecognitionService(settings.SpeechRecognitionType);
+                
+                // åº”ç”¨èƒŒæ™¯è®¾ç½®å’Œè®¾å¤‡é€‰æ‹©
+                ApplyBackgroundSettings(settings);
             }
         }
 
-        private void OnVoskRecognitionResult(string result)
+        private async void ApplyBackgroundSettings(AppSettings settings)
         {
-            // ½âÎöJSON½á¹û
+            System.Diagnostics.Debug.WriteLine($"åº”ç”¨èƒŒæ™¯è®¾ç½®: ç±»å‹={settings.BackgroundType}, ç›¸æœº={settings.SelectedCameraDeviceId}, éº¦å…‹é£={settings.SelectedMicrophoneDeviceId}");
+            
+            // æ ¹æ®èƒŒæ™¯ç±»å‹åº”ç”¨è®¾ç½®
+            switch (settings.BackgroundType)
+            {
+                case BackgroundType.Camera:
+                    await StartCameraPreview(settings.SelectedCameraDeviceId);
+                    break;
+                case BackgroundType.StaticImage:
+                case BackgroundType.Application:
+                default:
+                    await StopCameraPreview();
+                    break;
+            }
+        }
+
+        private async Task StartCameraPreview(string cameraDeviceId)
+        {
             try
             {
-                var json = JObject.Parse(result);
-                var text = json["text"]?.ToString();
+                // å¦‚æœç›¸æœºå·²ç»åœ¨è¿è¡Œï¼Œå…ˆåœæ­¢
+                await StopCameraPreview();
+                
+                // æ˜¾ç¤ºç›¸æœºé¢„è§ˆæ§ä»¶å¹¶å¼€å§‹é¢„è§ˆ
+                CameraPreviewControl.Visibility = Visibility.Visible;
 
-                if (!string.IsNullOrEmpty(text))
+                // å¦‚æœæŒ‡å®šäº†ç›¸æœºè®¾å¤‡IDï¼Œä½¿ç”¨æŒ‡å®šçš„è®¾å¤‡
+                if (!string.IsNullOrEmpty(cameraDeviceId))
                 {
-                    DispatcherQueue.TryEnqueue(() =>
+                    var cameraDevices = await CameraHelper.GetFrameSourceGroupsAsync();
+                    var device = cameraDevices.FirstOrDefault(x => x.Id == cameraDeviceId);
+                    if (device != null)
                     {
-                        ShowDialog("Äã(VOSK)", text);
-                        ProcessSpeechInput(text);
-                    });
+                        CameraHelper cameraHelper = new CameraHelper() { FrameSourceGroup = device };
+                        await CameraPreviewControl.StartAsync(cameraHelper);
+                    }
+                }
+                else
+                {
+                    await CameraPreviewControl.StartAsync();
+                }
+
+                _isCameraInitialized = true;
+                UpdateSpeechStatus("ç›¸æœºé¢„è§ˆå·²å¯åŠ¨");
+                System.Diagnostics.Debug.WriteLine("ç›¸æœºé¢„è§ˆå·²å¯åŠ¨");
+            }
+            catch (Exception ex)
+            {
+                UpdateSpeechStatus($"å¯åŠ¨ç›¸æœºé¢„è§ˆå¤±è´¥: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"å¯åŠ¨ç›¸æœºé¢„è§ˆå¤±è´¥: {ex.Message}");
+                
+                // å¦‚æœåˆå§‹åŒ–å¤±è´¥ï¼Œç¡®ä¿é¢„è§ˆæ§ä»¶éšè—
+                CameraPreviewControl.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private async Task StopCameraPreview()
+        {
+            if (_isCameraInitialized)
+            {
+                try
+                {
+                    // åœæ­¢é¢„è§ˆå¹¶éšè—æ§ä»¶
+                    CameraPreviewControl.Visibility = Visibility.Collapsed;
+                    CameraPreviewControl.Stop();
+
+                    _isCameraInitialized = false;
+                    UpdateSpeechStatus("ç›¸æœºé¢„è§ˆå·²åœæ­¢");
+                    System.Diagnostics.Debug.WriteLine("ç›¸æœºé¢„è§ˆå·²åœæ­¢");
+                }
+                catch (Exception ex)
+                {
+                    UpdateSpeechStatus($"åœæ­¢ç›¸æœºé¢„è§ˆå¤±è´¥: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"åœæ­¢ç›¸æœºé¢„è§ˆå¤±è´¥: {ex.Message}");
+                }
+            }
+            else
+            {
+                // ç¡®ä¿é¢„è§ˆæ§ä»¶éšè—
+                CameraPreviewControl.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private async Task InitializeSpeechRecognitionServices()
+        {
+            try
+            {
+                // åˆå§‹åŒ–Windowsè¯­éŸ³è¯†åˆ«æœåŠ¡
+                _windowsSpeechService = new WindowsSpeechService();
+                await _windowsSpeechService.InitializeAsync(null);
+                _windowsSpeechService.OnTextResult += AsrService_OnTextResult;
+
+                // åˆå§‹åŒ–VOSKè¯­éŸ³è¯†åˆ«æœåŠ¡
+                _voskAudioService = new VoskAudioService();
+                _voskAudioService.OnTextResult += AsrService_OnTextResult;
+
+                // è®¾ç½®é»˜è®¤è¯­éŸ³è¯†åˆ«æœåŠ¡
+                _currentAsrService = null;
+                UpdateSpeechStatus("æœªé€‰æ‹©è¯­éŸ³è¯†åˆ«å¼•æ“");
+            }
+            catch (Exception ex)
+            {
+                UpdateSpeechStatus($"è¯­éŸ³è¯†åˆ«æœåŠ¡åˆå§‹åŒ–å¤±è´¥: {ex.Message}");
+            }
+        }
+
+        private void AsrService_OnTextResult(object? sender, string text)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                ShowDialog("ä½ ", text);
+                ProcessSpeechInput(text);
+            });
+        }
+
+        private void SwitchSpeechRecognitionService(SpeechRecognitionType type)
+        {
+            try
+            {
+                // åœæ­¢å½“å‰æœåŠ¡
+                StopListening();
+
+                // åˆ‡æ¢æœåŠ¡
+                _currentAsrService = type switch
+                {
+                    SpeechRecognitionType.WindowsSpeech => _windowsSpeechService,
+                    SpeechRecognitionType.Vosk => _voskAudioService,
+                    _ => _windowsSpeechService
+                };
+
+                // å¦‚æœåˆ‡æ¢åˆ°VOSKä¸”éœ€è¦æ¨¡å‹è·¯å¾„ï¼Œæç¤ºç”¨æˆ·
+                if (type == SpeechRecognitionType.Vosk && string.IsNullOrEmpty(_appSettings.VoskModelPath))
+                {
+                    UpdateSpeechStatus("è¯·å…ˆè®¾ç½®VOSKæ¨¡å‹è·¯å¾„");
+                }
+                else
+                {
+                    UpdateSpeechStatus($"å·²åˆ‡æ¢åˆ°{type}è¯­éŸ³è¯†åˆ«");
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"½âÎöVOSK½á¹ûÊ§°Ü: {ex.Message}");
+                UpdateSpeechStatus($"åˆ‡æ¢è¯­éŸ³è¯†åˆ«æœåŠ¡å¤±è´¥: {ex.Message}");
             }
-        }
-
-
-        private async void InitializeSpeechRecognition()
-        {
-            try
-            {
-                // ³õÊ¼»¯WindowsÓïÒôÊ¶±ğ
-                speechRecognizer = new SpeechRecognizer();
-
-                // ´´½¨Óï·¨¹æÔò
-                var grammar = new SpeechRecognitionListConstraint(new List<string> { "ÄãºÃ", "ÌìÆø", "ÔÙ¼û", "Ãû×Ö" });
-                speechRecognizer.Constraints.Add(grammar);
-
-                var result = await speechRecognizer.CompileConstraintsAsync();
-
-                if (result.Status == SpeechRecognitionResultStatus.Success)
-                {
-                    speechRecognizer.ContinuousRecognitionSession.ResultGenerated += SpeechRecognized;
-                    UpdateSpeechStatus("ÓïÒôÊ¶±ğÒÑ³õÊ¼»¯");
-                }
-                else
-                {
-                    UpdateSpeechStatus("ÓïÒôÊ¶±ğ±àÒëÊ§°Ü");
-                }
-            }
-            catch (System.Exception ex)
-            {
-                UpdateSpeechStatus($"ÓïÒôÊ¶±ğ³õÊ¼»¯Ê§°Ü: {ex.Message}");
-            }
-
         }
 
         private void StartGame()
         {
-            // ¿ªÊ¼ÓÎÏ·¶Ô»°
-            ShowDialog("ÏµÍ³", "»¶Ó­À´µ½LiveGalGame£¡Çë¿ªÊ¼¶Ô»°°É¡£");
-            ShowOptions(new List<string> { "¿ªÊ¼ÓïÒôÊ¶±ğ", "ÊÖ¶¯ÊäÈë", "ÍË³öÓÎÏ·" });
+            // å¼€å§‹æ¸¸æˆå¯¹è¯
+            ShowDialog("ç³»ç»Ÿ", "æ¬¢è¿æ¥åˆ°LiveGalGameï¼è¯·å¼€å§‹å¯¹è¯å§ã€‚");
+            ShowOptions(new List<string> { "å¼€å§‹è¯­éŸ³è¯†åˆ«", "æ‰‹åŠ¨è¾“å…¥", "é€€å‡ºæ¸¸æˆ" });
         }
 
         private void ShowDialog(string speaker, string message)
@@ -166,7 +219,7 @@ namespace LiveGalGameWAS
             SpeakerText.Text = speaker;
             DialogText.Text = message;
 
-            // ÏÔÊ¾×ÖÄ»
+            // æ˜¾ç¤ºå­—å¹•
             SubtitleText.Text = message;
             SubtitleBorder.Visibility = Visibility.Visible;
         }
@@ -176,7 +229,7 @@ namespace LiveGalGameWAS
             currentOptions = options;
             OptionsPanel.Visibility = Visibility.Visible;
 
-            // ¸üĞÂÑ¡Ïî°´Å¥
+            // æ›´æ–°é€‰é¡¹æŒ‰é’®
             var buttons = new[] { Option1Button, Option2Button, Option3Button };
 
             for (int i = 0; i < buttons.Length; i++)
@@ -220,106 +273,94 @@ namespace LiveGalGameWAS
 
             switch (option)
             {
-                case "¿ªÊ¼ÓïÒôÊ¶±ğ":
+                case "å¼€å§‹è¯­éŸ³è¯†åˆ«":
                     StartListening();
-                    ShowDialog("ÏµÍ³", "ÓïÒôÊ¶±ğÒÑÆô¶¯£¬Çë¿ªÊ¼Ëµ»°...");
+                    ShowDialog("ç³»ç»Ÿ", "è¯­éŸ³è¯†åˆ«å·²å¯åŠ¨ï¼Œè¯·å¼€å§‹è¯´è¯...");
                     break;
-                case "ÊÖ¶¯ÊäÈë":
-                    ShowDialog("ÏµÍ³", "ÊÖ¶¯ÊäÈë¹¦ÄÜÔİÎ´ÊµÏÖ");
-                    ShowOptions(new List<string> { "¿ªÊ¼ÓïÒôÊ¶±ğ", "ÍË³öÓÎÏ·" });
+                case "æ‰‹åŠ¨è¾“å…¥":
+                    ShowDialog("ç³»ç»Ÿ", "æ‰‹åŠ¨è¾“å…¥åŠŸèƒ½æš‚æœªå®ç°");
+                    ShowOptions(new List<string> { "å¼€å§‹è¯­éŸ³è¯†åˆ«", "é€€å‡ºæ¸¸æˆ" });
                     break;
-                case "ÍË³öÓÎÏ·":
+                case "é€€å‡ºæ¸¸æˆ":
                     Application.Current.Exit();
                     break;
                 default:
-                    // ´¦ÀíÓÃ»§Ñ¡ÔñµÄ¶Ô»°Ñ¡Ïî
-                    ShowDialog("Äã", option);
+                    // å¤„ç†ç”¨æˆ·é€‰æ‹©çš„å¯¹è¯é€‰é¡¹
+                    ShowDialog("ä½ ", option);
                     await Task.Delay(1000);
-                    // Ä£ÄâNPC»Ø¸´
-                    ShowDialog("NPC", $"ÄãÑ¡ÔñÁË£º{option}£¬ÕâÊÇÒ»¸öºÜºÃµÄÑ¡Ôñ£¡");
-                    ShowOptions(new List<string> { "¼ÌĞø¶Ô»°", "½áÊø¶Ô»°" });
+                    // æ¨¡æ‹ŸNPCå›å¤
+                    ShowDialog("NPC", $"ä½ é€‰æ‹©äº†ï¼š{option}ï¼Œè¿™æ˜¯ä¸€ä¸ªå¾ˆå¥½çš„é€‰æ‹©ï¼");
+                    ShowOptions(new List<string> { "ç»§ç»­å¯¹è¯", "ç»“æŸå¯¹è¯" });
                     break;
             }
         }
 
         private async void StartListening()
         {
-            if (!isListening)
+            try
             {
-                //await speechRecognizer.ContinuousRecognitionSession.StartAsync();
-                _voskAudioService.StartListening();
-                isListening = true;
-                UpdateSpeechStatus("ÕıÔÚ¼àÌı...");
+                await _currentAsrService.Start();
+                UpdateSpeechStatus("æ­£åœ¨ç›‘å¬...");
                 SpeechIndicator.Fill = new SolidColorBrush(Microsoft.UI.Colors.Green);
+            }
+            catch (Exception ex)
+            {
+                UpdateSpeechStatus($"å¯åŠ¨ç›‘å¬å¤±è´¥: {ex.Message}");
+                SpeechIndicator.Fill = new SolidColorBrush(Microsoft.UI.Colors.Red);
             }
         }
 
         private async void StopListening()
         {
-            if (isListening)
+            try
             {
-                await speechRecognizer.ContinuousRecognitionSession.StopAsync();
-                isListening = false;
-                UpdateSpeechStatus("ÓïÒôÊ¶±ğÒÑÍ£Ö¹");
+                await _currentAsrService.Stop();
+                UpdateSpeechStatus("è¯­éŸ³è¯†åˆ«å·²åœæ­¢");
                 SpeechIndicator.Fill = new SolidColorBrush(Microsoft.UI.Colors.Red);
+            }
+            catch (Exception ex)
+            {
+                UpdateSpeechStatus($"åœæ­¢ç›‘å¬å¤±è´¥: {ex.Message}");
             }
         }
 
-        private void SpeechDetected(object sender, object e)
+        private void SettingsButton_Click(object sender, RoutedEventArgs e)
         {
-            UpdateSpeechStatus("¼ì²âµ½ÓïÒôÊäÈë...");
-            SpeechIndicator.Fill = new SolidColorBrush(Microsoft.UI.Colors.Yellow);
+            // å¯¼èˆªåˆ°è®¾ç½®é¡µé¢
+            MainWindow.Current.Navigate(typeof(SettingsPage), _appSettings);
         }
 
-        private void SpeechRecognized(object sender, SpeechContinuousRecognitionResultGeneratedEventArgs e)
-        {
-            var recognizedText = e.Result.Text;
-            UpdateSpeechStatus($"Ê¶±ğµ½: {recognizedText}");
-
-            // ÔÚÖ÷Ïß³ÌÖĞ¸üĞÂUI
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                ShowDialog("Äã", recognizedText);
-                ProcessSpeechInput(recognizedText);
-            });
-        }
-
-        private void SpeechRejected(object sender, object e)
-        {
-            UpdateSpeechStatus("ÓïÒôÊ¶±ğÊ§°Ü");
-            SpeechIndicator.Fill = new SolidColorBrush(Microsoft.UI.Colors.Red);
-        }
 
         private async void ProcessSpeechInput(string input)
         {
-            // ¼òµ¥µÄ¹Ø¼ü´ÊÆ¥ÅäÂß¼­
-            if (input.Contains("ÄãºÃ") || input.Contains("hello"))
+            // ç®€å•çš„å…³é”®è¯åŒ¹é…é€»è¾‘
+            if (input.Contains("ä½ å¥½") || input.Contains("hello"))
             {
                 await Task.Delay(1000);
-                ShowDialog("NPC", "ÄãºÃ£¡ºÜ¸ßĞËÈÏÊ¶Äã£¡");
+                ShowDialog("NPC", "ä½ å¥½ï¼å¾ˆé«˜å…´è®¤è¯†ä½ ï¼");
             }
-            else if (input.Contains("ÌìÆø") || input.Contains("weather"))
+            else if (input.Contains("å¤©æ°”") || input.Contains("weather"))
             {
                 await Task.Delay(1000);
-                ShowDialog("NPC", "½ñÌìµÄÌìÆøºÜ²»´íÄØ£¡");
+                ShowDialog("NPC", "ä»Šå¤©çš„å¤©æ°”å¾ˆä¸é”™å‘¢ï¼");
             }
-            else if (input.Contains("ÔÙ¼û") || input.Contains("°İ°İ") || input.Contains("goodbye"))
+            else if (input.Contains("å†è§") || input.Contains("æ‹œæ‹œ") || input.Contains("goodbye"))
             {
                 await Task.Delay(1000);
-                ShowDialog("NPC", "ÔÙ¼û£¡ÆÚ´ıÏÂ´ÎÁÄÌì£¡");
+                ShowDialog("NPC", "å†è§ï¼æœŸå¾…ä¸‹æ¬¡èŠå¤©ï¼");
             }
-            else if (input.Contains("Ãû×Ö") || input.Contains("name"))
+            else if (input.Contains("åå­—") || input.Contains("name"))
             {
                 await Task.Delay(1000);
-                ShowDialog("NPC", "ÎÒÊÇÄãµÄÓïÒôÖúÊÖ£¬ºÜ¸ßĞËÎªÄã·şÎñ£¡");
+                ShowDialog("NPC", "æˆ‘æ˜¯ä½ çš„è¯­éŸ³åŠ©æ‰‹ï¼Œå¾ˆé«˜å…´ä¸ºä½ æœåŠ¡ï¼");
             }
             else
             {
                 await Task.Delay(1000);
-                ShowDialog("NPC", $"ÄãËµ£º{input}£¬ÎÒÌıµ½ÁË£¡");
+                ShowDialog("NPC", $"ä½ è¯´ï¼š{input}ï¼Œæˆ‘å¬åˆ°äº†ï¼");
             }
 
-            ShowOptions(new List<string> { "¼ÌĞøÓïÒôÊ¶±ğ", "ÊÖ¶¯Ñ¡Ôñ", "ÍË³ö" });
+            ShowOptions(new List<string> { "ç»§ç»­è¯­éŸ³è¯†åˆ«", "æ‰‹åŠ¨é€‰æ‹©", "é€€å‡º" });
         }
 
         private void UpdateSpeechStatus(string status)
@@ -330,174 +371,10 @@ namespace LiveGalGameWAS
             });
         }
 
-        private async void InitializeBackgroundServices()
-        {
-            try
-            {
-                screenCaptureService = new ScreenCaptureService();
-                // screenCaptureService.FrameCaptured += OnFrameCaptured;
-
-                await LoadAvailableCamerasAsync();
-                await LoadAvailableApplicationsAsync();
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"±³¾°·şÎñ³õÊ¼»¯Ê§°Ü: {ex.Message}");
-            }
-        }
-
-        private async Task LoadAvailableCamerasAsync()
-        {
-            try
-            {
-                // ÕâÀï¿ÉÒÔÌí¼Ó»ñÈ¡¿ÉÓÃÏà»úµÄÂß¼­
-                CameraDeviceComboBox.Items.Clear();
-                CameraDeviceComboBox.Items.Add("Ä¬ÈÏÏà»ú");
-                CameraDeviceComboBox.SelectedIndex = 0;
-
-                await Task.CompletedTask; // ±ÜÃâÒì²½¾¯¸æ
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"¼ÓÔØÏà»úÁĞ±íÊ§°Ü: {ex.Message}");
-            }
-        }
-
-        private async Task LoadAvailableApplicationsAsync()
-        {
-            try
-            {
-                if (screenCaptureService != null)
-                {
-                    var windows = await screenCaptureService.GetAvailableWindowsAsync();
-                    ApplicationComboBox.Items.Clear();
-
-                    foreach (var window in windows)
-                    {
-                        ApplicationComboBox.Items.Add(window);
-                    }
-
-                    if (ApplicationComboBox.Items.Count > 0)
-                    {
-                        ApplicationComboBox.SelectedIndex = 0;
-                    }
-                }
-                else
-                {
-                    // Èç¹ûscreenCaptureServiceÎªnull£¬Ìí¼ÓÒ»Ğ©Ê¾ÀıÓ¦ÓÃ³ÌĞò
-                    ApplicationComboBox.Items.Clear();
-                    ApplicationComboBox.Items.Add("Ê¾ÀıÓ¦ÓÃ³ÌĞò");
-                    ApplicationComboBox.SelectedIndex = 0;
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"¼ÓÔØÓ¦ÓÃ³ÌĞòÁĞ±íÊ§°Ü: {ex.Message}");
-            }
-        }
-
-        private void OnFrameCaptured(SoftwareBitmapSource frame)
-        {
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                if (VideoBackground != null)
-                {
-                    VideoBackground.Source = frame;
-                    VideoBackground.Visibility = Visibility.Visible;
-                }
-            });
-        }
-
-        private void BackgroundSettingsButton_Click(object sender, RoutedEventArgs e)
-        {
-            BackgroundSettingsPanel.Visibility = BackgroundSettingsPanel.Visibility == Visibility.Visible
-                ? Visibility.Collapsed
-                : Visibility.Visible;
-        }
-
-        private void BackgroundTypeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (CameraDeviceComboBox == null) return;
-            if (BackgroundTypeComboBox.SelectedItem is ComboBoxItem item)
-            {
-                var selectedType = item.Content.ToString();
-
-                CameraDeviceComboBox.Visibility = selectedType == "Ïà»úÊÓÆµÁ÷" ? Visibility.Visible : Visibility.Collapsed;
-                ApplicationComboBox.Visibility = selectedType == "Ó¦ÓÃ³ÌĞò»­Ãæ" ? Visibility.Visible : Visibility.Collapsed;
-
-                currentBackgroundType = selectedType switch
-                {
-                    "¾²Ì¬Í¼Æ¬" => BackgroundType.StaticImage,
-                    "Ïà»úÊÓÆµÁ÷" => BackgroundType.Camera,
-                    "Ó¦ÓÃ³ÌĞò»­Ãæ" => BackgroundType.Application,
-                    _ => BackgroundType.StaticImage
-                };
-            }
-        }
-
-        private async void StartCaptureButton_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                switch (currentBackgroundType)
-                {
-                    case BackgroundType.Camera:
-                        CameraPreviewControl.Visibility = Visibility.Visible;
-                        await CameraPreviewControl.StartAsync();
-                        break;
-                    case BackgroundType.Application:
-                        if (screenCaptureService != null && !screenCaptureService.IsCapturing)
-                        {
-                            var selectedApp = ApplicationComboBox.SelectedItem?.ToString();
-                            await screenCaptureService.StartCaptureAsync(selectedApp ?? string.Empty);
-                            StartCaptureButton.Visibility = Visibility.Collapsed;
-                            StopCaptureButton.Visibility = Visibility.Visible;
-                        }
-                        break;
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"¿ªÊ¼²¶»ñÊ§°Ü: {ex.Message}");
-            }
-        }
-
-        private async void StopCaptureButton_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                switch (currentBackgroundType)
-                {
-                    case BackgroundType.Camera:
-                        CameraPreviewControl.Visibility = Visibility.Visible;
-                        break;
-                    case BackgroundType.Application:
-                        if (screenCaptureService != null && screenCaptureService.IsCapturing)
-                        {
-                            await screenCaptureService.StopCaptureAsync();
-
-                            CameraPreviewControl.Visibility = Visibility.Collapsed;
-                            StartCaptureButton.Visibility = Visibility.Visible;
-                            StopCaptureButton.Visibility = Visibility.Collapsed;
-
-                            // »Ö¸´¾²Ì¬±³¾°
-                            VideoBackground.Visibility = Visibility.Collapsed;
-                        }
-                        break;
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Í£Ö¹²¶»ñÊ§°Ü: {ex.Message}");
-            }
-        }
-
         public void Close()
         {
-
-            speechRecognizer?.Dispose();
             _voskAudioService?.Dispose();
-            screenCaptureService?.Dispose();
+            _windowsSpeechService?.Dispose();
         }
     }
 }

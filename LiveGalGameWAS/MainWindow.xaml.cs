@@ -25,30 +25,32 @@ namespace LiveGalGameWAS
     {
         public static MainWindow Current;
 
+        public Frame Frame => MainFrame;
+
         public MainWindow()
         {
             Current = this;
             InitializeComponent();
             this.Closed += MainWindow_Closed;
+            Frame.Navigate(typeof(MainPage));
         }
 
-        
         private void MainWindow_Closed(object sender, WindowEventArgs args)
         {
-            MainPage.Close();
+            if (Frame.Content is MainPage mainPage)
+            {
+                mainPage.Close();
+            }
         }
 
-    }
+        public async Task Navigate(Type page,object args)
+        {
+            if (Frame.Content is MainPage mainPage)
+            {
+                mainPage.Close();
+            }
 
-    class VoskResult
-    {
-        public string Text { get; set; }
-    }
-
-    public enum BackgroundType
-    {
-        StaticImage,
-        Camera,
-        Application
+            Frame.Navigate(page, args);
+        }
     }
 }
